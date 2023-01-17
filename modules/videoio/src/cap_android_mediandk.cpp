@@ -162,7 +162,7 @@ public:
         if (colorFormat == COLOR_FormatYUV420Planar) {
             cv::cvtColor(yuv, frame, cv::COLOR_YUV2BGR_YV12);
         } else if (colorFormat == COLOR_FormatYUV420SemiPlanar) {
-            cv::cvtColor(yuv, frame, cv::COLOR_YUV2BGR_NV21);
+            cv::cvtColor(yuv, frame, cv::COLOR_YUV2BGR_NV12);
         } else {
             LOGE("Unsupported video format: %d", colorFormat);
             return false;
@@ -213,25 +213,37 @@ public:
 
     bool initCapture(const char * filename)
     {
-        struct stat statBuffer;
-        if (stat(filename, &statBuffer) != 0) {
-            LOGE("failed to stat file: %s (%s)", filename, strerror(errno));
+        mediaExtractor = std::shared_ptr<AMediaExtractor>(AMediaExtractor_new(), deleter_AMediaExtractor);
+        if (!mediaExtractor) {
             return false;
         }
 
-        int fd = open(filename, O_RDONLY);
+        media_status_t err;
+        int fd;
+        long fileSize = 0x7ffffffffffffffL;
+
+        if (':' == filename[0]) {
+            fd = atoi(filename + 1);
+            LOGE("received fd %d", fd);
+        } else {
+            struct stat statBuffer;
+            if (stat(filename, &statBuffer) != 0) {
+                LOGE("failed to stat file: %s (%s)", filename, strerror(errno));
+                return false;
+            }
+
+            fileSize = statBuffer.st_size;
+            fd = open(filename, O_RDONLY);
+        }
 
         if (fd < 0) {
             LOGE("failed to open file: %s %d (%s)", filename, fd, strerror(errno));
             return false;
         }
 
-        mediaExtractor = std::shared_ptr<AMediaExtractor>(AMediaExtractor_new(), deleter_AMediaExtractor);
-        if (!mediaExtractor) {
-            return false;
-        }
-        media_status_t err = AMediaExtractor_setDataSourceFd(mediaExtractor.get(), fd, 0, statBuffer.st_size);
+        err = AMediaExtractor_setDataSourceFd(mediaExtractor.get(), fd, 0, fileSize);
         close(fd);
+
         if (err != AMEDIA_OK) {
             LOGV("setDataSource error: %d", err);
             return false;
@@ -520,8 +532,8 @@ public:
         size_t vPlaneSize = yPlaneSize / 4;
 
         Mat channels[2] = {
-            Mat( vPlaneSize, 1, CV_8UC1, imageYV12.ptr() + yPlaneSize + vPlaneSize ).clone(),
-            Mat( vPlaneSize, 1, CV_8UC1, imageYV12.ptr() + yPlaneSize ).clone()
+            Mat( vPlaneSize, 1, CV_8UC1, imageYV12.ptr() + yPlaneSize ).clone(),
+            Mat( vPlaneSize, 1, CV_8UC1, imageYV12.ptr() + yPlaneSize + vPlaneSize ).clone()
         };
         Mat vuMat( vPlaneSize, 1, CV_8UC2, imageYV12.ptr() + yPlaneSize );
         merge(channels, 2, vuMat);
