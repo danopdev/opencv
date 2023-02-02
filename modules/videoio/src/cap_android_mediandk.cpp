@@ -116,6 +116,9 @@ public:
                     LOGV("width (frame): %d", frameWidth);
                     LOGV("stride (frame): %d", frameStride);
                     LOGV("height (frame): %d", frameHeight);
+
+                    if (frameStride < frameWidth) frameStride = frameWidth;
+
                     if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM)
                     {
                         LOGV("output EOS");
@@ -151,13 +154,68 @@ public:
         return decodeFrame();
     }
 
+    void yuv2rgb(int uOffset, int vOffset, int uvStep, int uvStride, int uvScale) {
+        LOGE("buffer size: %d, uOffset: %d, vOffset: %d, uvStep: %d, uvStride: %d, uvScale: %d", (int)buffer.size(), uOffset, vOffset, uvStep, uvStride, uvScale);
+
+        frame.create(videoHeight, videoWidth, CV_8UC3);
+
+        frame.forEach<Point3_<uint8_t>>(
+            [this, uOffset, vOffset, uvStep, uvStride, uvScale](Point3_<uint8_t>& pixel, const int position[]) -> void {
+                const int row = position[0];
+                const int column = position[1];
+
+                const int y = buffer[row * frameStride + column];
+                const int uvDelta = (row / uvScale) * uvStride + (column / uvScale) * uvStep;
+                const int u = buffer[uOffset + uvDelta];
+                const int v = buffer[vOffset + uvDelta];
+
+                const int r = y + 1.4075 * (v - 128);
+                const int g = y - 0.3455 * (u - 128) - (0.7169 * (v - 128));
+                const int b = y + 1.7790 * (u - 128);
+
+                pixel.x = (r <= 0) ? 0 : ((r >= 255) ? 255 : r);
+                pixel.y = (g <= 0) ? 0 : ((g >= 255) ? 255 : g);
+                pixel.z = (b <= 0) ? 0 : ((b >= 255) ? 255 : b);
+            }
+        );
+
+        /*
+        uint8_t* frameIt = frame.ptr();
+
+        for(int row = 0; row < videoHeight; row++) {
+            uint8_t* yRow = &buffer[row * frameStride];
+            uint8_t* uRow = &buffer[uOffset + (row / uvScale) * uvStride];
+            uint8_t* vRow = &buffer[vOffset + (row / uvScale) * uvStride];
+
+            for(int column = 0; column < videoWidth; column++) {
+                int y = yRow[column];
+                int u = uRow[(column / uvScale) * uvStep];
+                int v = vRow[(column / uvScale) * uvStep];
+
+                int r = y + 1.4075 * (v - 128);
+                int g = y - 0.3455 * (u - 128) - (0.7169 * (v - 128));
+                int b = y + 1.7790 * (u - 128);
+
+                *frameIt = (r <= 0) ? 0 : ((r >= 255) ? 255 : r);
+                frameIt++;
+                *frameIt = (g <= 0) ? 0 : ((g >= 255) ? 255 : g);
+                frameIt++;
+                *frameIt = (b <= 0) ? 0 : ((b >= 255) ? 255 : b);
+                frameIt++;
+             }
+        }
+        */
+    }
+
     bool retrieveFrame(int, OutputArray out) CV_OVERRIDE
     {
         if (buffer.empty()) {
             return false;
         }
 
+        /*
         Mat yuv(frameHeight + frameHeight/2, frameStride, CV_8UC1, buffer.data());
+
 
         if (colorFormat == COLOR_FormatYUV420Planar) {
             cv::cvtColor(yuv, frame, cv::COLOR_YUV2BGR_YV12);
@@ -170,6 +228,37 @@ public:
 
         Mat croppedFrame = frame(Rect(0, 0, videoWidth, videoHeight));
         out.assign(croppedFrame);
+
+        if (videoOrientationAuto && -1 != videoRotationCode) {
+            cv::rotate(out, out, videoRotationCode);
+        }
+        */
+
+        if (colorFormat == COLOR_FormatYUV420Planar) {
+            int uOffset = frameHeight * frameStride;
+            int uvStride = frameStride / 2;
+            yuv2rgb(
+                uOffset,
+                uOffset + (frameHeight / 2) * uvStride,
+                1,
+                uvStride,
+                2
+            );
+        } else if (colorFormat == COLOR_FormatYUV420SemiPlanar) {
+            int uOffset = frameHeight * frameStride;
+            yuv2rgb(
+                uOffset,
+                uOffset + 1, //(frameHeight / 4) * frameStride,
+                2,
+                frameStride,
+                2
+            );
+        } else {
+            LOGE("Unsupported video format: %d", colorFormat);
+            return false;
+        }
+
+        out.assign(frame);
 
         if (videoOrientationAuto && -1 != videoRotationCode) {
             cv::rotate(out, out, videoRotationCode);
