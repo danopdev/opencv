@@ -669,6 +669,32 @@ public:
 CV_EXPORTS_W Ptr<MergeMertens>
 createMergeMertens(float contrast_weight = 1.0f, float saturation_weight = 1.0f, float exposure_weight = 0.0f);
 
+
+class CV_EXPORTS_W MergeMertens2 : public MergeExposures
+{
+public:
+    CV_WRAP virtual void process(InputArrayOfArrays src, OutputArray dst,
+                                 InputArray times, InputArray response) CV_OVERRIDE = 0;
+    /** @brief Short version of process, that doesn't take extra arguments.
+
+    @param src vector of input images
+    @param dst result image
+     */
+    CV_WRAP virtual void process(InputArrayOfArrays src, OutputArray dst) = 0;
+
+    CV_WRAP virtual float getContrastWeight() const = 0;
+    CV_WRAP virtual void setContrastWeight(float contrast_weiht) = 0;
+
+    CV_WRAP virtual float getSaturationWeight() const = 0;
+    CV_WRAP virtual void setSaturationWeight(float saturation_weight) = 0;
+
+    CV_WRAP virtual float getExposureWeight() const = 0;
+    CV_WRAP virtual void setExposureWeight(float exposure_weight) = 0;
+};
+
+CV_EXPORTS_W Ptr<MergeMertens>
+createMergeMertens2(float contrast_weight = 1.0f, float saturation_weight = 1.0f, float exposure_weight = 0.0f);
+
 /** @brief The resulting HDR image is calculated as weighted average of the exposures considering exposure
 values and camera response.
 
