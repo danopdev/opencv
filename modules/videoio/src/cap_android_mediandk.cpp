@@ -47,6 +47,105 @@ static inline void deleter_AMediaFormat(AMediaFormat *format) {
 
 class AndroidMediaNdkCapture : public IVideoCapture
 {
+    struct YUV2RGBCoef {
+        YUV2RGBCoef()
+        {
+            reset();
+        }
+
+        void reset()
+        {
+            red.yAdd = 0.0;
+            red.yMul = 0.0;
+            red.uAdd = 0.0;
+            red.uMul = 0.0;
+            red.vAdd = 0.0;
+            red.vMul = 0.0;
+            red.add = 0.0;
+
+            green.yAdd = 0.0;
+            green.yMul = 0.0;
+            green.uAdd = 0.0;
+            green.uMul = 0.0;
+            green.vAdd = 0.0;
+            green.vMul = 0.0;
+            green.add = 0.0;
+
+            blue.yAdd = 0.0;
+            blue.yMul = 0.0;
+            blue.uAdd = 0.0;
+            blue.uMul = 0.0;
+            blue.vAdd = 0.0;
+            blue.vMul = 0.0;
+            blue.add = 0.0;
+        }
+
+        struct {
+            double yAdd;
+            double yMul;
+            double uAdd;
+            double uMul;
+            double vAdd;
+            double vMul;
+            double add;
+        } red, green, blue;
+    };
+
+    static void calculateYUV2RGBCoef(YUV2RGBCoef& coef, double KR, double KB, int range) {
+        /*
+            REF: http://avisynth.nl/index.php/Color_conversions
+        */
+
+        double KG = 1 - KR - KB;
+
+        coef.reset();
+
+        if (2 == range) {
+            /*
+            r = (255/219)*y + (255/112)*v*(1-Kr) - (255*16/219 + 255*128/112*(1-Kr))
+            g = (255/219)*y - (255/112)*u*(1-Kb)*Kb/Kg - (255/112)*v*(1-Kr)*Kr/Kg
+                - (255*16/219 - 255/112*128*(1-Kb)*Kb/Kg - 255/112*128*(1-Kr)*Kr/Kg)
+            b = (255/219)*y + (255/112)*u*(1-Kb) - (255*16/219 + 255*128/112*(1-Kb))
+            */
+
+            coef.red.yMul = 255.0 / 219.0;
+            coef.red.vMul = (255.0 / 112.0) * (1.0 - KR);
+            coef.red.add = - (255.0 * 16.0 / 219.0 + (255.0 * 128.0 / 112.0) * (1.0 - KR));
+
+            coef.green.yMul = 255.0 / 219.0;
+            coef.green.uMul = - (255.0 / 112.0) * (1.0 - KB) * KB / KG;
+            coef.green.vMul = - (255.0 / 112.0) * (1.0 - KR) * KR / KG;
+            coef.green.add = - (255.0 * 16.0 / 219.0 - 255.0 / 112.0 * 128.0 * (1.0 - KB) * KB / KG - 255.0 / 112.0 * 128.0 * (1.0 - KR) * KR / KG);
+
+            coef.blue.yMul = 255.0 / 219.0;
+            coef.blue.uMul = (255.0 / 112.0) * (1.0 - KB);
+            coef.blue.add = - (255.0 * 16.0 / 219.0 + 255.0 * 128.0 / 112.0 * (1.0 - KB));
+
+            return;
+        }
+
+        /*
+        r = y + 2*(v-128)*(1-Kr)
+        g = y - 2*(u-128)*(1-Kb)*Kb/Kg - 2*(v-128)*(1-Kr)*Kr/Kg
+        b = y + 2*(u-128)*(1-Kb)
+        */
+
+        coef.red.yMul = 1.0;
+        coef.red.vAdd = -128.0;
+        coef.red.vMul = 2.0 * (1.0 - KR);
+
+        coef.green.yMul = 1.0;
+        coef.green.uAdd = -128.0;
+        coef.green.uMul = -2.0 * (1 - KB) * KB / KG;
+        coef.green.vAdd = -128.0;
+        coef.green.vMul = -2.0 * (1 - KR) * KR / KG;
+
+        coef.blue.yMul = 1.0;
+        coef.blue.uAdd = -128.0;
+        coef.blue.uMul = 2.0 * (1.0 - KB);
+    }
+
+    YUV2RGBCoef yuv2rgbCoef;
 
 public:
     AndroidMediaNdkCapture():
@@ -169,42 +268,32 @@ public:
                 const int u = buffer[uOffset + uvDelta];
                 const int v = buffer[vOffset + uvDelta];
 
-                const int r = y + 1.4075 * (v - 128);
-                const int g = y - 0.3455 * (u - 128) - (0.7169 * (v - 128));
-                const int b = y + 1.7790 * (u - 128);
+                const int r = int(
+                                (y + yuv2rgbCoef.red.yAdd) * yuv2rgbCoef.red.yMul +
+                                (u + yuv2rgbCoef.red.uAdd) * yuv2rgbCoef.red.uMul +
+                                (v + yuv2rgbCoef.red.vAdd) * yuv2rgbCoef.red.vMul +
+                                yuv2rgbCoef.red.add
+                            );
+
+                const int g = int(
+                                (y + yuv2rgbCoef.green.yAdd) * yuv2rgbCoef.green.yMul +
+                                (u + yuv2rgbCoef.green.uAdd) * yuv2rgbCoef.green.uMul +
+                                (v + yuv2rgbCoef.green.vAdd) * yuv2rgbCoef.green.vMul +
+                                yuv2rgbCoef.green.add
+                            );
+
+                const int b = int(
+                                (y + yuv2rgbCoef.blue.yAdd) * yuv2rgbCoef.blue.yMul +
+                                (u + yuv2rgbCoef.blue.uAdd) * yuv2rgbCoef.blue.uMul +
+                                (v + yuv2rgbCoef.blue.vAdd) * yuv2rgbCoef.blue.vMul +
+                                yuv2rgbCoef.blue.add
+                            );
 
                 pixel.x = (r <= 0) ? 0 : ((r >= 255) ? 255 : r);
                 pixel.y = (g <= 0) ? 0 : ((g >= 255) ? 255 : g);
                 pixel.z = (b <= 0) ? 0 : ((b >= 255) ? 255 : b);
             }
         );
-
-        /*
-        uint8_t* frameIt = frame.ptr();
-
-        for(int row = 0; row < videoHeight; row++) {
-            uint8_t* yRow = &buffer[row * frameStride];
-            uint8_t* uRow = &buffer[uOffset + (row / uvScale) * uvStride];
-            uint8_t* vRow = &buffer[vOffset + (row / uvScale) * uvStride];
-
-            for(int column = 0; column < videoWidth; column++) {
-                int y = yRow[column];
-                int u = uRow[(column / uvScale) * uvStep];
-                int v = vRow[(column / uvScale) * uvStep];
-
-                int r = y + 1.4075 * (v - 128);
-                int g = y - 0.3455 * (u - 128) - (0.7169 * (v - 128));
-                int b = y + 1.7790 * (u - 128);
-
-                *frameIt = (r <= 0) ? 0 : ((r >= 255) ? 255 : r);
-                frameIt++;
-                *frameIt = (g <= 0) ? 0 : ((g >= 255) ? 255 : g);
-                frameIt++;
-                *frameIt = (b <= 0) ? 0 : ((b >= 255) ? 255 : b);
-                frameIt++;
-             }
-        }
-        */
     }
 
     bool retrieveFrame(int, OutputArray out) CV_OVERRIDE
@@ -212,27 +301,6 @@ public:
         if (buffer.empty()) {
             return false;
         }
-
-        /*
-        Mat yuv(frameHeight + frameHeight/2, frameStride, CV_8UC1, buffer.data());
-
-
-        if (colorFormat == COLOR_FormatYUV420Planar) {
-            cv::cvtColor(yuv, frame, cv::COLOR_YUV2BGR_YV12);
-        } else if (colorFormat == COLOR_FormatYUV420SemiPlanar) {
-            cv::cvtColor(yuv, frame, cv::COLOR_YUV2BGR_NV12);
-        } else {
-            LOGE("Unsupported video format: %d", colorFormat);
-            return false;
-        }
-
-        Mat croppedFrame = frame(Rect(0, 0, videoWidth, videoHeight));
-        out.assign(croppedFrame);
-
-        if (videoOrientationAuto && -1 != videoRotationCode) {
-            cv::rotate(out, out, videoRotationCode);
-        }
-        */
 
         if (colorFormat == COLOR_FormatYUV420Planar) {
             int uOffset = frameHeight * frameStride;
@@ -248,7 +316,7 @@ public:
             int uOffset = frameHeight * frameStride;
             yuv2rgb(
                 uOffset,
-                uOffset + 1, //(frameHeight / 4) * frameStride,
+                uOffset + 1,
                 2,
                 frameStride,
                 2
@@ -352,7 +420,7 @@ public:
             if (!AMediaFormat_getString(format.get(), AMEDIAFORMAT_KEY_MIME, &mime)) {
                 LOGV("no mime type");
             } else if (!strncmp(mime, "video/", 6)) {
-                int32_t trackWidth, trackHeight, fps, frameCount = 0, rotation = 0;
+                int32_t trackWidth, trackHeight, fps, frameCount = 0, rotation = 0, colorRange = 1, colorStandard = 1;
                 AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_WIDTH, &trackWidth);
                 AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_HEIGHT, &trackHeight);
                 AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_FRAME_RATE, &fps);
@@ -365,6 +433,33 @@ public:
                 #if __ANDROID_API__ >= 29
                     AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_FRAME_COUNT, &frameCount);
                 #endif
+
+                AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_COLOR_RANGE, &colorRange);
+                AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_COLOR_STANDARD, &colorStandard);
+
+                LOGE("color range: %d", colorRange);
+                LOGE("color standard: %d", colorStandard);
+
+                double KR = 0.2126, KB = 0.0722; //COLOR_STANDARD_BT709
+
+                switch (colorStandard)
+                {
+                case 2: //COLOR_STANDARD_BT601_PAL
+                    KR = 0.299;
+                    KB = 0.114;
+                    break;
+
+                case 4: //COLOR_STANDARD_BT601_NTSC
+                    KR = 0.299;
+                    KB = 0.114;
+                    break;
+
+                case 6: //COLOR_STANDARD_BT2020
+                    KR = 0.2627;
+                    KB = 0.0593;
+                }
+
+                calculateYUV2RGBCoef(yuv2rgbCoef, KR, KB, colorRange);
 
                 LOGV("width (track): %d", trackWidth);
                 LOGV("height (track): %d", trackHeight);
