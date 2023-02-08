@@ -310,10 +310,7 @@ Ptr<MergeMertens> createMergeMertens(float wcon, float wsat, float wexp)
 class MergeMertensForPipelineImpl CV_FINAL : public MergeMertensForPipeline
 {
 public:
-    MergeMertensForPipelineImpl(float _wcon, float _wsat, float _wexp) :
-        wcon(_wcon),
-        wsat(_wsat),
-        wexp(_wexp)
+    MergeMertensForPipelineImpl()
     {
     }
 
@@ -322,132 +319,114 @@ public:
         CV_INSTRUMENT_REGION();
 
         Mat image = image_.getMat();
-        int channels = image.channels();
-        CV_Assert(channels == 3);
+        CV_Assert(image.channels() == 3);
         Size size = image.size();
 
         Mat img, gray, contrast, saturation, wellexp;
-        std::vector<Mat> splitted(channels);
+        std::vector<Mat> channels(3);
 
         image.convertTo(img, CV_32F, 1.0f/255.0f);
         cvtColor(img, gray, COLOR_RGB2GRAY);
-        split(img, splitted);
+        split(img, channels);
 
         Laplacian(gray, contrast, CV_32F);
         contrast = abs(contrast);
 
-        Mat mean = Mat::zeros(size, CV_32F);
-        for(int c = 0; c < channels; c++) {
-            mean += splitted[c];
+        Mat mean = channels[0].clone();
+        for(int c = 1; c < 3; c++) {
+            mean += channels[c];
         }
-        mean /= channels;
+        mean /= 3;
 
         saturation = Mat::zeros(size, CV_32F);
-        for(int c = 0; c < channels;  c++) {
-            Mat deviation = splitted[c] - mean;
+        for(int c = 0; c < 3;  c++) {
+            Mat deviation = channels[c] - mean;
             pow(deviation, 2.0f, deviation);
             saturation += deviation;
         }
         sqrt(saturation, saturation);
 
-        wellexp = Mat::ones(size, CV_32F);
-        for(int c = 0; c < channels; c++) {
-            Mat expo = splitted[c] - 0.5f;
-            pow(expo, 2.0f, expo);
-            expo = -expo / 0.08f;
-            exp(expo, expo);
-            wellexp = wellexp.mul(expo);
-        }
-
-        pow(contrast, wcon, contrast);
-        pow(saturation, wsat, saturation);
-        pow(wellexp, wexp, wellexp);
-
         Mat weight = contrast;
         weight = weight.mul(saturation);
-        weight = weight.mul(wellexp) + 1e-12f;
+        weight += 1e-12f;
 
         weights.push_back(weight);
-        images.push_back(img);
+        imagesChannels.push_back(channels);
 
         /*
-        if (weight_sum.empty()) {
-            weight_sum = weight.clone();
+        if (weightSum.empty()) {
+            weightSum = weight.clone();
             LOGE("New weight_sum");
         } else {
-            weight_sum += weight;
+            weightSum += weight;
         }
         */
     }
 
     void pop() CV_OVERRIDE
     {
-        //weight_sum -= weights.front();
+        //weightSum -= weights.front();
         weights.pop_front();
-        images.pop_front();
+        imagesChannels.pop_front();
     }
 
-    //false usage => use only dst
     void process(OutputArray dst) CV_OVERRIDE
     {
         CV_INSTRUMENT_REGION();
 
-        auto size = images.front().size();
-        int channels = images.front().channels();
+        auto size = imagesChannels.front().front().size();
 
-        int CV_32FCC = CV_MAKETYPE(CV_32F, channels);
-
-        Mat weight_sum = weights.front().clone();
+        Mat weightSum = weights.front().clone();
         {
             auto weightsIt = weights.begin();
             weightsIt++;
             for(; weightsIt != weights.end(); weightsIt++) {
-                weight_sum += *weightsIt;
+                weightSum += *weightsIt;
             }
         }
 
         Mat res;
+        auto imagesIt = imagesChannels.begin();
+        auto weightsIt = weights.begin();
+        std::vector<Mat> channels(3);
+        Mat weight;
 
-        for(auto imagesIt = images.begin(), weightsIt = weights.begin(); imagesIt != images.end(); imagesIt++, weightsIt++) {
-            Mat weight = *weightsIt / weight_sum;
-            Mat img = imagesIt->clone();
-
-            std::vector<Mat> splitted(channels);
-            Mat imgW;
-            split(img, splitted);
-            for(int c = 0; c < channels; c++) {
-                splitted[c] = splitted[c].mul(weight);
+        for(; imagesIt != imagesChannels.end(); imagesIt++, weightsIt++) {
+            divide(*weightsIt, weightSum, weight);
+            for(int c = 0; c < 3; c++) {
+                multiply((*imagesIt)[c], weight, channels[c]);
             }
-            merge(splitted, imgW);
+
+            Mat imgWeighted;
+            merge(channels, imgWeighted);
 
             if(res.empty()) {
-                res = imgW;
+                res = imgWeighted;
             } else {
-                res += imgW;
+                res += imgWeighted;
             }
         }
 
-        dst.create(size, CV_32FCC);
+        dst.create(size, CV_32FC3);
         res.copyTo(dst);
     }
 
     void release() CV_OVERRIDE
     {
         weights.clear();
-        images.clear();
-        //weight_sum.release();
+        imagesChannels.clear();
+        //weightSum.release();
     }
 
 private:
-    float wcon, wsat, wexp;
     std::list<Mat> weights;
-    std::list<Mat> images;
-    //Mat weight_sum; //I obtain strange behaviour with the precalculated weight_sum (the substraction poses problems)
+    std::list<std::vector<Mat>> imagesChannels;
+    //Mat weightSum; //I obtain strange behaviour with the precalculated weight_sum (the substraction poses problems)
 };
 
-Ptr<MergeMertensForPipeline> createMergeMertensForPipeline(float wcon, float wsat, float wexp)
+Ptr<MergeMertensForPipeline> createMergeMertensForPipeline()
 {
-    return makePtr<MergeMertensForPipelineImpl>(wcon, wsat, wexp);
+    return makePtr<MergeMertensForPipelineImpl>();
 }
 
 class MergeRobertsonImpl CV_FINAL : public MergeRobertson

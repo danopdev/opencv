@@ -682,7 +682,7 @@ public:
 };
 
 CV_EXPORTS_W Ptr<MergeMertensForPipeline>
-createMergeMertensForPipeline(float contrast_weight = 1.0f, float saturation_weight = 1.0f, float exposure_weight = 0.0f);
+createMergeMertensForPipeline();
 
 /** @brief The resulting HDR image is calculated as weighted average of the exposures considering exposure
 values and camera response.
