@@ -50,11 +50,12 @@ namespace cv
 class AlignMTBImpl CV_FINAL : public AlignMTB
 {
 public:
-    AlignMTBImpl(int _max_bits, int _exclude_range, bool _cut) :
+    AlignMTBImpl(int _max_bits, int _exclude_range, bool _cut, int _pivot_position = 50) :
         name("AlignMTB"),
         max_bits(_max_bits),
         exclude_range(_exclude_range),
-        cut(_cut)
+        cut(_cut),
+        pivot_position(_pivot_position)
     {
     }
 
@@ -76,7 +77,7 @@ public:
         checkImageDimensions(src);
         dst.resize(src.size());
 
-        size_t pivot = src.size() / 2;
+        size_t pivot = src.size() * pivot_position / 100;
         dst[pivot] = src[pivot];
         Mat gray_base;
         cvtColor(src[pivot], gray_base, COLOR_RGB2GRAY);
@@ -226,6 +227,7 @@ protected:
     String name;
     int max_bits, exclude_range;
     bool cut;
+    int pivot_position;
 
     void downsample(Mat& src, Mat& dst)
     {
@@ -273,9 +275,9 @@ protected:
     }
 };
 
-Ptr<AlignMTB> createAlignMTB(int max_bits, int exclude_range, bool cut)
+Ptr<AlignMTB> createAlignMTB(int max_bits, int exclude_range, bool cut, int pivot_position)
 {
-    return makePtr<AlignMTBImpl>(max_bits, exclude_range, cut);
+    return makePtr<AlignMTBImpl>(max_bits, exclude_range, cut, pivot_position);
 }
 
 }

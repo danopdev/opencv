@@ -524,7 +524,7 @@ usually good enough (31 and 63 pixels shift respectively).
 median value.
 @param cut if true cuts images, otherwise fills the new regions with zeros.
  */
-CV_EXPORTS_W Ptr<AlignMTB> createAlignMTB(int max_bits = 6, int exclude_range = 4, bool cut = true);
+CV_EXPORTS_W Ptr<AlignMTB> createAlignMTB(int max_bits = 6, int exclude_range = 4, bool cut = true, int pivot_position = 50);
 
 /** @brief The base class for camera response calibration algorithms.
  */
