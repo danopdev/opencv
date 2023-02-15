@@ -351,30 +351,20 @@ public:
         weight += 1e-12f;
 
         weights.push_back(weight);
-        imagesChannels.push_back(channels);
-
-        /*
-        if (weightSum.empty()) {
-            weightSum = weight.clone();
-            LOGE("New weight_sum");
-        } else {
-            weightSum += weight;
-        }
-        */
+        images.push_back(img);
     }
 
     void pop() CV_OVERRIDE
     {
-        //weightSum -= weights.front();
         weights.pop_front();
-        imagesChannels.pop_front();
+        images.pop_front();
     }
 
     void process(OutputArray dst) CV_OVERRIDE
     {
         CV_INSTRUMENT_REGION();
 
-        auto size = imagesChannels.front().front().size();
+        auto size = images.front().size();
 
         Mat weightSum = weights.front().clone();
         {
@@ -385,43 +375,61 @@ public:
             }
         }
 
-        Mat res;
-        auto imagesIt = imagesChannels.begin();
-        auto weightsIt = weights.begin();
-        std::vector<Mat> channels(3);
-        Mat weight;
+        int maxlevel = static_cast<int>(logf(static_cast<float>(min(size.width, size.height))) / logf(2.0f));
+        std::vector<Mat> res_pyr(maxlevel + 1);
 
-        for(; imagesIt != imagesChannels.end(); imagesIt++, weightsIt++) {
+        auto imagesIt = images.begin();
+        auto weightsIt = weights.begin();
+        Mat weight;
+        std::vector<Mat> img_pyr, weight_pyr;
+
+        for(; imagesIt != images.end(); imagesIt++, weightsIt++) {
             divide(*weightsIt, weightSum, weight);
-            for(int c = 0; c < 3; c++) {
-                multiply((*imagesIt)[c], weight, channels[c]);
+
+            buildPyramid(imagesIt->clone(), img_pyr, maxlevel);
+            buildPyramid(weight, weight_pyr, maxlevel);
+
+            for(int lvl = 0; lvl < maxlevel; lvl++) {
+                Mat up;
+                pyrUp(img_pyr[lvl + 1], up, img_pyr[lvl].size());
+                img_pyr[lvl] -= up;
             }
 
-            Mat imgWeighted;
-            merge(channels, imgWeighted);
-
-            if(res.empty()) {
-                res = imgWeighted;
-            } else {
-                res += imgWeighted;
+            for(int lvl = 0; lvl <= maxlevel; lvl++) {
+                std::vector<Mat> splitted(3);
+                split(img_pyr[lvl], splitted);
+                for(int c = 0; c < 3; c++) {
+                    splitted[c] = splitted[c].mul(weight_pyr[lvl]);
+                }
+                merge(splitted, img_pyr[lvl]);
+                if(res_pyr[lvl].empty()) {
+                    res_pyr[lvl] = img_pyr[lvl];
+                } else {
+                    res_pyr[lvl] += img_pyr[lvl];
+                }
             }
         }
 
+        for(int lvl = maxlevel; lvl > 0; lvl--) {
+            Mat up;
+            pyrUp(res_pyr[lvl], up, res_pyr[lvl - 1].size());
+            res_pyr[lvl - 1] += up;
+        }
         dst.create(size, CV_32FC3);
-        res.copyTo(dst);
+        res_pyr[0].copyTo(dst);
     }
 
     void release() CV_OVERRIDE
     {
         weights.clear();
-        imagesChannels.clear();
+        images.clear();
+        //imagesChannels.clear();
         //weightSum.release();
     }
 
 private:
     std::list<Mat> weights;
-    std::list<std::vector<Mat>> imagesChannels;
-    //Mat weightSum; //I obtain strange behaviour with the precalculated weight_sum (the substraction poses problems)
+    std::list<Mat> images;
 };
 
 Ptr<MergeMertensForPipeline> createMergeMertensForPipeline()
