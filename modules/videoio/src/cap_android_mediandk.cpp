@@ -147,6 +147,85 @@ class AndroidMediaNdkCapture : public IVideoCapture
 
     YUV2RGBCoef yuv2rgbCoef;
 
+    void updateFormat(std::shared_ptr<AMediaFormat>& format) {
+        int32_t colorRange = 2, colorStandard = 1;
+
+        AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_COLOR_RANGE, &colorRange);
+        AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_COLOR_STANDARD, &colorStandard);
+        AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_BIT_RATE, &bitrate);
+
+        if (0 == colorRange) colorRange = 2;
+        if (0 == colorStandard) colorStandard = 1;
+
+        LOGE("color range: %d", colorRange);
+        LOGE("color standard: %d", colorStandard);
+        LOGE("bitrate: %d", bitrate);
+
+        double KR = 0.2126, KB = 0.0722; //COLOR_STANDARD_BT709
+
+        switch (colorStandard)
+        {
+        case 2: //COLOR_STANDARD_BT601_PAL
+            KR = 0.299;
+            KB = 0.114;
+            break;
+
+        case 4: //COLOR_STANDARD_BT601_NTSC
+            KR = 0.299;
+            KB = 0.114;
+            break;
+
+        case 6: //COLOR_STANDARD_BT2020
+            KR = 0.2627;
+            KB = 0.0593;
+        }
+
+        calculateYUV2RGBCoef(yuv2rgbCoef, KR, KB, colorRange);
+    }
+
+    void yuv2rgb(int uOffset, int vOffset, int uvStep, int uvStride, int uvScale) {
+        LOGE("buffer size: %d, uOffset: %d, vOffset: %d, uvStep: %d, uvStride: %d, uvScale: %d", (int)buffer.size(), uOffset, vOffset, uvStep, uvStride, uvScale);
+
+        frame.create(videoHeight, videoWidth, CV_8UC3);
+
+        frame.forEach<Point3_<uint8_t>>(
+            [this, uOffset, vOffset, uvStep, uvStride, uvScale](Point3_<uint8_t>& pixel, const int position[]) -> void {
+                const int row = position[0];
+                const int column = position[1];
+
+                const int y = buffer[row * frameStride + column];
+                const int uvDelta = (row / uvScale) * uvStride + (column / uvScale) * uvStep;
+                const int u = buffer[uOffset + uvDelta];
+                const int v = buffer[vOffset + uvDelta];
+
+                const int r = int(
+                                (y + yuv2rgbCoef.red.yAdd) * yuv2rgbCoef.red.yMul +
+                                (u + yuv2rgbCoef.red.uAdd) * yuv2rgbCoef.red.uMul +
+                                (v + yuv2rgbCoef.red.vAdd) * yuv2rgbCoef.red.vMul +
+                                yuv2rgbCoef.red.add
+                            );
+
+                const int g = int(
+                                (y + yuv2rgbCoef.green.yAdd) * yuv2rgbCoef.green.yMul +
+                                (u + yuv2rgbCoef.green.uAdd) * yuv2rgbCoef.green.uMul +
+                                (v + yuv2rgbCoef.green.vAdd) * yuv2rgbCoef.green.vMul +
+                                yuv2rgbCoef.green.add
+                            );
+
+                const int b = int(
+                                (y + yuv2rgbCoef.blue.yAdd) * yuv2rgbCoef.blue.yMul +
+                                (u + yuv2rgbCoef.blue.uAdd) * yuv2rgbCoef.blue.uMul +
+                                (v + yuv2rgbCoef.blue.vAdd) * yuv2rgbCoef.blue.vMul +
+                                yuv2rgbCoef.blue.add
+                            );
+
+                pixel.x = (r <= 0) ? 0 : ((r >= 255) ? 255 : r);
+                pixel.y = (g <= 0) ? 0 : ((g >= 255) ? 255 : g);
+                pixel.z = (b <= 0) ? 0 : ((b >= 255) ? 255 : b);
+            }
+        );
+    }
+
 public:
     AndroidMediaNdkCapture():
         sawInputEOS(false), sawOutputEOS(false),
@@ -154,7 +233,8 @@ public:
         videoWidth(0), videoHeight(0),
         videoFrameCount(0),
         videoRotation(0), videoRotationCode(-1),
-        videoOrientationAuto(false) {}
+        videoOrientationAuto(false),
+        bitrate(0) {}
 
     std::shared_ptr<AMediaExtractor> mediaExtractor;
     std::shared_ptr<AMediaCodec> mediaCodec;
@@ -171,6 +251,7 @@ public:
     int32_t videoRotation;
     int32_t videoRotationCode;
     bool videoOrientationAuto;
+    int32_t bitrate;
     std::vector<uint8_t> buffer;
     Mat frame;
 
@@ -216,6 +297,8 @@ public:
                     LOGV("stride (frame): %d", frameStride);
                     LOGV("height (frame): %d", frameHeight);
 
+                    updateFormat(mediaFormat);
+
                     if (frameStride < frameWidth) frameStride = frameWidth;
 
                     if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM)
@@ -251,49 +334,6 @@ public:
         // clear the previous frame
         buffer.clear();
         return decodeFrame();
-    }
-
-    void yuv2rgb(int uOffset, int vOffset, int uvStep, int uvStride, int uvScale) {
-        LOGE("buffer size: %d, uOffset: %d, vOffset: %d, uvStep: %d, uvStride: %d, uvScale: %d", (int)buffer.size(), uOffset, vOffset, uvStep, uvStride, uvScale);
-
-        frame.create(videoHeight, videoWidth, CV_8UC3);
-
-        frame.forEach<Point3_<uint8_t>>(
-            [this, uOffset, vOffset, uvStep, uvStride, uvScale](Point3_<uint8_t>& pixel, const int position[]) -> void {
-                const int row = position[0];
-                const int column = position[1];
-
-                const int y = buffer[row * frameStride + column];
-                const int uvDelta = (row / uvScale) * uvStride + (column / uvScale) * uvStep;
-                const int u = buffer[uOffset + uvDelta];
-                const int v = buffer[vOffset + uvDelta];
-
-                const int r = int(
-                                (y + yuv2rgbCoef.red.yAdd) * yuv2rgbCoef.red.yMul +
-                                (u + yuv2rgbCoef.red.uAdd) * yuv2rgbCoef.red.uMul +
-                                (v + yuv2rgbCoef.red.vAdd) * yuv2rgbCoef.red.vMul +
-                                yuv2rgbCoef.red.add
-                            );
-
-                const int g = int(
-                                (y + yuv2rgbCoef.green.yAdd) * yuv2rgbCoef.green.yMul +
-                                (u + yuv2rgbCoef.green.uAdd) * yuv2rgbCoef.green.uMul +
-                                (v + yuv2rgbCoef.green.vAdd) * yuv2rgbCoef.green.vMul +
-                                yuv2rgbCoef.green.add
-                            );
-
-                const int b = int(
-                                (y + yuv2rgbCoef.blue.yAdd) * yuv2rgbCoef.blue.yMul +
-                                (u + yuv2rgbCoef.blue.uAdd) * yuv2rgbCoef.blue.uMul +
-                                (v + yuv2rgbCoef.blue.vAdd) * yuv2rgbCoef.blue.vMul +
-                                yuv2rgbCoef.blue.add
-                            );
-
-                pixel.x = (r <= 0) ? 0 : ((r >= 255) ? 255 : r);
-                pixel.y = (g <= 0) ? 0 : ((g >= 255) ? 255 : g);
-                pixel.z = (b <= 0) ? 0 : ((b >= 255) ? 255 : b);
-            }
-        );
     }
 
     bool retrieveFrame(int, OutputArray out) CV_OVERRIDE
@@ -351,6 +391,7 @@ public:
             case CV_CAP_PROP_FRAME_COUNT: return videoFrameCount;
             case CAP_PROP_ORIENTATION_META: return videoRotation;
             case CAP_PROP_ORIENTATION_AUTO: return videoOrientationAuto ? 1 : 0;
+            case CAP_PROP_BITRATE: return bitrate;
         }
         return 0;
     }
@@ -420,7 +461,7 @@ public:
             if (!AMediaFormat_getString(format.get(), AMEDIAFORMAT_KEY_MIME, &mime)) {
                 LOGV("no mime type");
             } else if (!strncmp(mime, "video/", 6)) {
-                int32_t trackWidth, trackHeight, fps, frameCount = 0, rotation = 0, colorRange = 1, colorStandard = 1;
+                int32_t trackWidth, trackHeight, fps, frameCount = 0, rotation = 0;
                 AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_WIDTH, &trackWidth);
                 AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_HEIGHT, &trackHeight);
                 AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_FRAME_RATE, &fps);
@@ -434,32 +475,7 @@ public:
                     AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_FRAME_COUNT, &frameCount);
                 #endif
 
-                AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_COLOR_RANGE, &colorRange);
-                AMediaFormat_getInt32(format.get(), AMEDIAFORMAT_KEY_COLOR_STANDARD, &colorStandard);
-
-                LOGE("color range: %d", colorRange);
-                LOGE("color standard: %d", colorStandard);
-
-                double KR = 0.2126, KB = 0.0722; //COLOR_STANDARD_BT709
-
-                switch (colorStandard)
-                {
-                case 2: //COLOR_STANDARD_BT601_PAL
-                    KR = 0.299;
-                    KB = 0.114;
-                    break;
-
-                case 4: //COLOR_STANDARD_BT601_NTSC
-                    KR = 0.299;
-                    KB = 0.114;
-                    break;
-
-                case 6: //COLOR_STANDARD_BT2020
-                    KR = 0.2627;
-                    KB = 0.0593;
-                }
-
-                calculateYUV2RGBCoef(yuv2rgbCoef, KR, KB, colorRange);
+                updateFormat(format);
 
                 LOGV("width (track): %d", trackWidth);
                 LOGV("height (track): %d", trackHeight);
